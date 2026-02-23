@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { prisma } from '@/lib/prisma';
+import { mockOrders, mockAuditEvents } from '@/lib/mockData';
 import { auth } from '@/lib/auth';
 import { OrderStatus } from '@prisma/client';
 
@@ -25,29 +25,26 @@ export async function POST(
         return NextResponse.json({ error: 'Invalid status' }, { status: 400 });
     }
 
-    const order = await prisma.order.findUnique({ where: { id } });
-    if (!order) return NextResponse.json({ error: 'Order not found' }, { status: 404 });
+    const orderIndex = mockOrders.findIndex(o => o.id === id);
+    if (orderIndex === -1) return NextResponse.json({ error: 'Order not found' }, { status: 404 });
 
-    const previousStatus = order.status;
+    const previousStatus = mockOrders[orderIndex].status;
 
-    const updated = await prisma.order.update({
-        where: { id },
-        data: { status: status as OrderStatus },
+    mockOrders[orderIndex].status = status as OrderStatus;
+
+    mockAuditEvents.push({
+        id: `audit-${Date.now()}`,
+        orderId: id,
+        actorUserId: session.user.id,
+        eventType: 'STATUS_CHANGED',
+        eventPayload: {
+            from: previousStatus,
+            to: status,
+            fromLabel: STATUS_LABELS[previousStatus],
+            toLabel: STATUS_LABELS[status],
+        } as any,
+        createdAt: new Date(),
     });
 
-    await prisma.auditEvent.create({
-        data: {
-            orderId: id,
-            actorUserId: session.user.id,
-            eventType: 'STATUS_CHANGED',
-            eventPayload: {
-                from: previousStatus,
-                to: status,
-                fromLabel: STATUS_LABELS[previousStatus],
-                toLabel: STATUS_LABELS[status],
-            },
-        },
-    });
-
-    return NextResponse.json(updated);
+    return NextResponse.json(mockOrders[orderIndex]);
 }

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { prisma } from '@/lib/prisma';
+import { mockOrders, mockPatients, mockClinicians, mockPayers, mockOrderLines, mockDocuments, mockAuditEvents, mockProducts, mockVendors } from '@/lib/mockData';
 import { auth } from '@/lib/auth';
 import { PayerType } from '@prisma/client';
 
@@ -12,28 +12,33 @@ export async function GET(
 
     const { id } = await params;
 
-    const order = await prisma.order.findUnique({
-        where: { id },
-        include: {
-            patient: true,
-            clinician: true,
-            payer: true,
-            createdBy: { select: { id: true, name: true, email: true } },
-            assignedTo: { select: { id: true, name: true, email: true } },
-            lines: {
-                include: {
-                    product: { include: { vendor: true } },
-                },
-            },
-            documents: { orderBy: { createdAt: 'desc' } },
-            auditEvents: {
-                include: { actor: { select: { id: true, name: true, email: true } } },
-                orderBy: { createdAt: 'asc' },
-            },
-        },
-    });
+    const orderObj = mockOrders.find(o => o.id === id);
+    if (!orderObj) return NextResponse.json({ error: 'Order not found' }, { status: 404 });
 
-    if (!order) return NextResponse.json({ error: 'Order not found' }, { status: 404 });
+    const patient = mockPatients.find(p => p.id === orderObj.patientId) || null;
+    const clinician = mockClinicians.find(c => c.id === orderObj.clinicianId) || null;
+    const payer = mockPayers.find(p => p.id === orderObj.payerId) || null;
+    const lines = mockOrderLines.filter(l => l.orderId === id).map(l => ({
+        ...l,
+        product: { ...mockProducts.find(p => p.id === l.productId), vendor: mockVendors.find(v => v.id === mockProducts.find(p => p.id === l.productId)?.vendorId) }
+    }));
+    const documents = mockDocuments.filter(d => d.orderId === id).sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    const auditEvents = mockAuditEvents.filter(a => a.orderId === id).map(a => ({
+        ...a,
+        actor: { id: a.actorUserId, name: 'Demo User', email: '' }
+    })).sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+
+    const order = {
+        ...orderObj,
+        patient,
+        clinician,
+        payer,
+        createdBy: { id: orderObj.createdById, name: 'Demo User', email: '' },
+        assignedTo: { id: orderObj.assignedToId, name: 'Demo User', email: '' },
+        lines,
+        documents,
+        auditEvents
+    };
 
     return NextResponse.json(order);
 }
@@ -49,8 +54,11 @@ export async function PUT(
     const body = await req.json();
 
     try {
-        const existingOrder = await prisma.order.findUnique({ where: { id } });
-        if (!existingOrder) return NextResponse.json({ error: 'Order not found' }, { status: 404 });
+        const orderIndex = mockOrders.findIndex(o => o.id === id);
+        if (orderIndex === -1) return NextResponse.json({ error: 'Order not found' }, { status: 404 });
+
+        const existingOrder = mockOrders[orderIndex];
+
         if (!existingOrder.isDraft) {
             // Submitted orders only allow status changes
             return NextResponse.json({ error: 'Order is submitted and cannot be edited' }, { status: 400 });
@@ -60,62 +68,73 @@ export async function PUT(
 
         // Update patient
         if (patient && existingOrder.patientId) {
-            await prisma.patient.update({
-                where: { id: existingOrder.patientId },
-                data: patient,
-            });
+            const pIdx = mockPatients.findIndex(p => p.id === existingOrder.patientId);
+            if (pIdx > -1) mockPatients[pIdx] = { ...mockPatients[pIdx], ...patient };
         }
 
         // Update clinician
         if (clinician && existingOrder.clinicianId) {
-            await prisma.clinician.update({
-                where: { id: existingOrder.clinicianId },
-                data: clinician,
-            });
+            const cIdx = mockClinicians.findIndex(c => c.id === existingOrder.clinicianId);
+            if (cIdx > -1) mockClinicians[cIdx] = { ...mockClinicians[cIdx], ...clinician };
         }
 
         // Replace order lines if provided
         if (lines !== undefined) {
-            await prisma.orderLine.deleteMany({ where: { orderId: id } });
+            // Remove old lines
+            const linesToKeep = mockOrderLines.filter(l => l.orderId !== id);
+            mockOrderLines.length = 0;
+            mockOrderLines.push(...linesToKeep);
+
+            // Add new
             if (lines.length > 0) {
-                await prisma.orderLine.createMany({
-                    data: lines.map((l: any) => ({
+                for (const l of lines) {
+                    mockOrderLines.push({
+                        id: `line-${Date.now()}-${Math.random()}`,
                         orderId: id,
                         productId: l.productId,
                         quantity: l.quantity,
+                        unitCost: 0 as any, // Mocks unit cost generically
                         unitPrice: l.unitPrice,
                         lineTotal: l.lineTotal,
                         measurementFormUrl: l.measurementFormUrl || null,
-                    })),
-                });
+                        createdAt: new Date()
+                    } as any);
+                }
             }
         }
 
-        const updatedOrder = await prisma.order.update({
-            where: { id },
-            data: {
-                ...(payerType !== undefined ? { payerType: payerType as PayerType } : {}),
-                ...(payerId !== undefined ? { payerId: payerId || null } : {}),
-                ...(insuranceChecklist !== undefined ? { insuranceChecklist } : {}),
-            },
-            include: {
-                patient: true,
-                clinician: true,
-                payer: true,
-                lines: { include: { product: { include: { vendor: true } } } },
-                documents: true,
-            },
-        });
+        mockOrders[orderIndex] = {
+            ...mockOrders[orderIndex],
+            ...(payerType !== undefined ? { payerType: payerType as PayerType } : {}),
+            ...(payerId !== undefined ? { payerId: payerId || null } : {}),
+            ...(insuranceChecklist !== undefined ? { insuranceChecklist } : {}),
+        };
 
         // Audit event
-        await prisma.auditEvent.create({
-            data: {
-                orderId: id,
-                actorUserId: session.user.id,
-                eventType: 'ORDER_UPDATED',
-                eventPayload: { fields: Object.keys(body) },
-            },
+        mockAuditEvents.push({
+            id: `audit-${Date.now()}`,
+            orderId: id,
+            actorUserId: session.user.id,
+            eventType: 'ORDER_UPDATED',
+            eventPayload: { fields: Object.keys(body) } as any,
+            createdAt: new Date(),
         });
+
+        // Quick refetch to respond properly...
+        const updatedOrderObj = mockOrders[orderIndex];
+        const updatedLines = mockOrderLines.filter(l => l.orderId === id).map(l => ({
+            ...l,
+            product: { ...mockProducts.find(p => p.id === l.productId), vendor: mockVendors.find(v => v.id === mockProducts.find(p => p.id === l.productId)?.vendorId) }
+        }));
+
+        const updatedOrder = {
+            ...updatedOrderObj,
+            patient: mockPatients.find(p => p.id === updatedOrderObj.patientId),
+            clinician: mockClinicians.find(c => c.id === updatedOrderObj.clinicianId),
+            payer: mockPayers.find(p => p.id === updatedOrderObj.payerId),
+            lines: updatedLines,
+            documents: mockDocuments.filter(d => d.orderId === id)
+        };
 
         return NextResponse.json(updatedOrder);
     } catch (error) {

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { prisma } from '@/lib/prisma';
+import { mockProducts, mockVendors } from '@/lib/mockData';
 import { auth } from '@/lib/auth';
 
 export async function GET(req: NextRequest) {
@@ -9,22 +9,25 @@ export async function GET(req: NextRequest) {
     const { searchParams } = new URL(req.url);
     const q = searchParams.get('q') || '';
 
-    const products = await prisma.product.findMany({
-        where: q
-            ? {
-                OR: [
-                    { name: { contains: q, mode: 'insensitive' } },
-                    { hcpcsCode: { contains: q, mode: 'insensitive' } },
-                    { category: { contains: q, mode: 'insensitive' } },
-                ],
-            }
-            : undefined,
-        include: { vendor: true },
-        orderBy: { name: 'asc' },
-        take: 50,
-    });
+    let products = [...mockProducts];
+    if (q) {
+        const lowerQ = q.toLowerCase();
+        products = products.filter(p =>
+            p.name.toLowerCase().includes(lowerQ) ||
+            p.hcpcsCode.toLowerCase().includes(lowerQ) ||
+            p.category.toLowerCase().includes(lowerQ)
+        );
+    }
 
-    return NextResponse.json(products);
+    products.sort((a, b) => a.name.localeCompare(b.name));
+
+    // Attach vendor object
+    const productsWithVendor = products.slice(0, 50).map(p => ({
+        ...p,
+        vendor: mockVendors.find(v => v.id === p.vendorId) || null
+    }));
+
+    return NextResponse.json(productsWithVendor);
 }
 
 export async function POST(req: NextRequest) {
@@ -40,20 +43,25 @@ export async function POST(req: NextRequest) {
             return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
         }
 
-        const product = await prisma.product.create({
-            data: {
-                name: data.name.trim(),
-                hcpcsCode: data.hcpcsCode.trim(),
-                vendorId: data.vendorId,
-                unitCost: data.unitCost ? parseFloat(data.unitCost) : 0,
-                msrp: data.msrp ? parseFloat(data.msrp) : 0,
-                category: data.category.trim(),
-                measurementFormRequired: Boolean(data.measurementFormRequired)
-            },
-            include: { vendor: true }
-        });
+        const product = {
+            id: `prod-${Date.now()}`,
+            name: data.name.trim(),
+            hcpcsCode: data.hcpcsCode.trim(),
+            vendorId: data.vendorId,
+            unitCost: data.unitCost ? parseFloat(data.unitCost) : 0,
+            msrp: data.msrp ? parseFloat(data.msrp) : 0,
+            category: data.category.trim(),
+            measurementFormRequired: Boolean(data.measurementFormRequired)
+        } as any;
 
-        return NextResponse.json(product, { status: 201 });
+        mockProducts.push(product);
+
+        const productWithVendor = {
+            ...product,
+            vendor: mockVendors.find(v => v.id === product.vendorId) || null
+        };
+
+        return NextResponse.json(productWithVendor, { status: 201 });
     } catch (error: any) {
         return NextResponse.json({ error: error.message }, { status: 500 });
     }

@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { prisma } from '@/lib/prisma';
+import { mockVendors, mockProducts } from '@/lib/mockData';
 import { auth } from '@/lib/auth';
 
 export async function PUT(req: Request, { params }: { params: Promise<{ id: string }> }) {
@@ -16,12 +16,14 @@ export async function PUT(req: Request, { params }: { params: Promise<{ id: stri
             return NextResponse.json({ error: 'Name is required' }, { status: 400 });
         }
 
-        const vendor = await prisma.vendor.update({
-            where: { id },
-            data: { name: data.name.trim() }
-        });
+        const vendorIndex = mockVendors.findIndex(v => v.id === id);
+        if (vendorIndex === -1) {
+            return NextResponse.json({ error: 'Vendor not found' }, { status: 404 });
+        }
 
-        return NextResponse.json(vendor);
+        mockVendors[vendorIndex].name = data.name.trim();
+
+        return NextResponse.json(mockVendors[vendorIndex]);
     } catch (error: any) {
         return NextResponse.json({ error: error.message }, { status: 500 });
     }
@@ -36,14 +38,15 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
         const { id } = await params;
 
         // Check if products exist for this vendor
-        const count = await prisma.product.count({ where: { vendorId: id } });
+        const count = mockProducts.filter(p => p.vendorId === id).length;
         if (count > 0) {
             return NextResponse.json({ error: 'Cannot delete vendor with associated products' }, { status: 400 });
         }
 
-        await prisma.vendor.delete({
-            where: { id }
-        });
+        const vendorIndex = mockVendors.findIndex(v => v.id === id);
+        if (vendorIndex > -1) {
+            mockVendors.splice(vendorIndex, 1);
+        }
 
         return NextResponse.json({ success: true });
     } catch (error: any) {
