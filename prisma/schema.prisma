@@ -1,0 +1,169 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  order_entry
+  ops
+  admin
+}
+
+enum OrderStatus {
+  pending_approval
+  approved
+  payment_confirmed
+  shipped
+  delivered
+}
+
+enum PayerType {
+  insurance
+  self_pay
+}
+
+enum DocumentType {
+  ENCOUNTER
+  INVOICE
+  POD
+}
+
+model User {
+  id           String       @id @default(cuid())
+  name         String
+  email        String       @unique
+  passwordHash String
+  role         Role         @default(order_entry)
+  createdAt    DateTime     @default(now())
+  orders       Order[]      @relation("CreatedBy")
+  assignedOrders Order[]    @relation("AssignedTo")
+  auditEvents  AuditEvent[]
+}
+
+model Patient {
+  id        String   @id @default(cuid())
+  firstName String
+  lastName  String
+  address   String
+  phone     String
+  email     String
+  createdAt DateTime @default(now())
+  orders    Order[]
+}
+
+model Clinician {
+  id            String   @id @default(cuid())
+  firstName     String
+  lastName      String
+  clinicName    String
+  clinicAddress String
+  phone         String
+  email         String
+  createdAt     DateTime @default(now())
+  orders        Order[]
+}
+
+model Vendor {
+  id       String    @id @default(cuid())
+  name     String
+  products Product[]
+}
+
+model Product {
+  id                     String      @id @default(cuid())
+  name                   String
+  hcpcsCode              String
+  vendorId               String
+  vendor                 Vendor      @relation(fields: [vendorId], references: [id])
+  unitCost               Decimal     @db.Decimal(10, 2)
+  msrp                   Decimal     @db.Decimal(10, 2)
+  category               String
+  measurementFormRequired Boolean    @default(false)
+  orderLines             OrderLine[]
+}
+
+model Payer {
+  id          String        @id @default(cuid())
+  name        String
+  orders      Order[]
+  feeSchedule FeeSchedule[]
+}
+
+model FeeSchedule {
+  id        String  @id @default(cuid())
+  payerId   String
+  payer     Payer   @relation(fields: [payerId], references: [id])
+  hcpcsCode String
+  rate      Decimal @db.Decimal(10, 2)
+
+  @@unique([payerId, hcpcsCode])
+}
+
+model Order {
+  id          String      @id @default(cuid())
+  patient     Patient     @relation(fields: [patientId], references: [id])
+  patientId   String
+  clinician   Clinician?  @relation(fields: [clinicianId], references: [id])
+  clinicianId String?
+  payerType   PayerType   @default(self_pay)
+  payer       Payer?      @relation(fields: [payerId], references: [id])
+  payerId     String?
+  status      OrderStatus @default(pending_approval)
+  createdBy   User        @relation("CreatedBy", fields: [createdById], references: [id])
+  createdById String
+  assignedTo  User?       @relation("AssignedTo", fields: [assignedToId], references: [id])
+  assignedToId String?
+  submittedAt DateTime?
+  isDraft     Boolean     @default(true)
+
+  // Insurance checklist fields
+  insuranceChecklist Json?
+
+  createdAt  DateTime    @default(now())
+  updatedAt  DateTime    @updatedAt
+  lines      OrderLine[]
+  documents  Document[]
+  auditEvents AuditEvent[]
+}
+
+model OrderLine {
+  id                 String   @id @default(cuid())
+  order              Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  orderId            String
+  product            Product  @relation(fields: [productId], references: [id])
+  productId          String
+  quantity           Int
+  unitCost           Decimal  @db.Decimal(10, 2) @default(0.00)
+  unitPrice          Decimal  @db.Decimal(10, 2)
+  lineTotal          Decimal  @db.Decimal(10, 2)
+  measurementFormUrl String?
+  createdAt          DateTime @default(now())
+}
+
+model Document {
+  id        String       @id @default(cuid())
+  order     Order        @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  orderId   String
+  type      DocumentType @default(ENCOUNTER)
+  fileUrl   String
+  version   Int          @default(1)
+  createdAt DateTime     @default(now())
+}
+
+model AuditEvent {
+  id           String   @id @default(cuid())
+  order        Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  orderId      String
+  actor        User     @relation(fields: [actorUserId], references: [id])
+  actorUserId  String
+  eventType    String
+  eventPayload Json?
+  createdAt    DateTime @default(now())
+}
