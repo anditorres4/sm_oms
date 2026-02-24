@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { prisma } from '@/lib/prisma';
+import { mockVendors } from '@/lib/mockData';
 import { auth } from '@/lib/auth';
 
 export async function GET() {
@@ -8,10 +8,7 @@ export async function GET() {
         // Allow ops & admin to fetch, maybe order_entry if needed
         if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-        const vendors = await prisma.vendor.findMany({
-            orderBy: { name: 'asc' }
-        });
-
+        const vendors = [...mockVendors].sort((a, b) => a.name.localeCompare(b.name));
         return NextResponse.json(vendors);
     } catch (error: any) {
         return NextResponse.json({ error: error.message }, { status: 500 });
@@ -31,9 +28,11 @@ export async function POST(req: Request) {
             return NextResponse.json({ error: 'Name is required' }, { status: 400 });
         }
 
-        const vendor = await prisma.vendor.create({
-            data: { name: data.name.trim() }
-        });
+        const vendor = {
+            id: `vendor-${Date.now()}`,
+            name: data.name.trim()
+        };
+        mockVendors.push(vendor);
 
         return NextResponse.json(vendor, { status: 201 });
     } catch (error: any) {

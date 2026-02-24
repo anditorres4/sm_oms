@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { prisma } from '@/lib/prisma';
+import { mockOrders, mockPatients, mockClinicians, mockPayers, mockOrderLines, mockDocuments, mockAuditEvents, mockProducts, mockVendors } from '@/lib/mockData';
 import { auth } from '@/lib/auth';
 import { generateEncounterFormPDF } from '@/lib/pdf/generateEncounterForm';
 import { generatePatientInvoicePDF } from '@/lib/pdf/generateInvoice';
@@ -16,17 +16,24 @@ export async function POST(
 
     const { id } = await params;
 
-    const order = await prisma.order.findUnique({
-        where: { id },
-        include: {
-            patient: true,
-            clinician: true,
-            payer: true,
-            lines: { include: { product: { include: { vendor: true } } } },
-        },
-    });
+    const orderIndex = mockOrders.findIndex(o => o.id === id);
+    if (orderIndex === -1) return NextResponse.json({ error: 'Order not found' }, { status: 404 });
 
-    if (!order) return NextResponse.json({ error: 'Order not found' }, { status: 404 });
+    const orderObj = mockOrders[orderIndex];
+
+    const lines = mockOrderLines.filter(l => l.orderId === id).map(l => ({
+        ...l,
+        product: { ...mockProducts.find(p => p.id === l.productId), vendor: mockVendors.find(v => v.id === mockProducts.find(p => p.id === l.productId)?.vendorId) }
+    }));
+
+    const order = {
+        ...orderObj,
+        patient: mockPatients.find(p => p.id === orderObj.patientId) || null,
+        clinician: mockClinicians.find(c => c.id === orderObj.clinicianId) || null,
+        payer: mockPayers.find(p => p.id === orderObj.payerId) || null,
+        lines,
+    };
+
     if (!order.isDraft) return NextResponse.json({ error: 'Order already submitted' }, { status: 400 });
 
     // Validate: must have at least 1 line
@@ -60,8 +67,8 @@ export async function POST(
         await mkdir(pdfDir, { recursive: true });
 
         // Get next version based on existing Encounter docs
-        const existingDocs = await prisma.document.count({ where: { orderId: id, type: 'ENCOUNTER' } });
-        const version = existingDocs + 1;
+        const existingDocsCount = mockDocuments.filter(d => d.orderId === id && d.type === 'ENCOUNTER').length;
+        const version = existingDocsCount + 1;
 
         // Run pdf generators in parallel
         const [encounterBytes, invoiceBytes, podBytes] = await Promise.all([
@@ -81,59 +88,71 @@ export async function POST(
         ]);
 
         // Create document records
-        const docs = await prisma.$transaction([
-            prisma.document.create({
-                data: { orderId: id, type: 'ENCOUNTER', fileUrl: `/uploads/pdfs/${encounterFileName}`, version },
-            }),
-            prisma.document.create({
-                data: { orderId: id, type: 'INVOICE', fileUrl: `/uploads/pdfs/${invoiceFileName}`, version },
-            }),
-            prisma.document.create({
-                data: { orderId: id, type: 'POD', fileUrl: `/uploads/pdfs/${podFileName}`, version },
-            }),
-        ]);
+        const docs = [
+            {
+                id: `doc-${Date.now()}-1`,
+                orderId: id,
+                type: 'ENCOUNTER',
+                fileUrl: `/uploads/pdfs/${encounterFileName}`,
+                version,
+                createdAt: new Date(),
+            },
+            {
+                id: `doc-${Date.now()}-2`,
+                orderId: id,
+                type: 'INVOICE',
+                fileUrl: `/uploads/pdfs/${invoiceFileName}`,
+                version,
+                createdAt: new Date(),
+            },
+            {
+                id: `doc-${Date.now()}-3`,
+                orderId: id,
+                type: 'POD',
+                fileUrl: `/uploads/pdfs/${podFileName}`,
+                version,
+                createdAt: new Date(),
+            }
+        ] as any[];
+
+        mockDocuments.push(...docs);
 
         // Mark order as submitted and update status
-        const updatedOrder = await prisma.order.update({
-            where: { id },
-            data: {
-                isDraft: false,
-                submittedAt: new Date(),
-                status: finalStatus,
-            },
-        });
+        mockOrders[orderIndex].isDraft = false;
+        mockOrders[orderIndex].submittedAt = new Date();
+        mockOrders[orderIndex].status = finalStatus as any;
 
         // Audit events
-        await prisma.auditEvent.create({
-            data: {
-                orderId: id,
-                actorUserId: session.user.id,
-                eventType: 'ORDER_SUBMITTED',
-                eventPayload: {
-                    encounterDocId: docs[0].id,
-                    invoiceDocId: docs[1].id,
-                    podDocId: docs[2].id,
-                    autoApproved: !needsApproval
-                },
-            },
+        mockAuditEvents.push({
+            id: `audit-${Date.now()}-1`,
+            orderId: id,
+            actorUserId: session.user.id,
+            eventType: 'ORDER_SUBMITTED',
+            eventPayload: {
+                encounterDocId: docs[0].id,
+                invoiceDocId: docs[1].id,
+                podDocId: docs[2].id,
+                autoApproved: !needsApproval
+            } as any,
+            createdAt: new Date(),
         });
 
         if (!needsApproval) {
-            await prisma.auditEvent.create({
-                data: {
-                    orderId: id,
-                    actorUserId: session.user.id,
-                    eventType: 'STATUS_CHANGED',
-                    eventPayload: {
-                        from: 'draft',
-                        to: 'approved',
-                        note: 'Order auto-approved (no products require manager approval)'
-                    },
-                },
+            mockAuditEvents.push({
+                id: `audit-${Date.now()}-2`,
+                orderId: id,
+                actorUserId: session.user.id,
+                eventType: 'STATUS_CHANGED',
+                eventPayload: {
+                    from: 'draft',
+                    to: 'approved',
+                    note: 'Order auto-approved (no products require manager approval)'
+                } as any,
+                createdAt: new Date(),
             });
         }
 
-        return NextResponse.json({ order: updatedOrder, documents: docs });
+        return NextResponse.json({ order: mockOrders[orderIndex], documents: docs });
     } catch (error) {
         console.error('Submit error:', error);
         return NextResponse.json({ error: 'Failed to submit order' }, { status: 500 });

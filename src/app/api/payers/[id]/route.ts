@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { prisma } from '@/lib/prisma';
+import { mockPayers, mockOrders, mockFeeSchedules } from '@/lib/mockData';
 import { auth } from '@/lib/auth';
 
 export async function PUT(req: Request, { params }: { params: Promise<{ id: string }> }) {
@@ -16,12 +16,14 @@ export async function PUT(req: Request, { params }: { params: Promise<{ id: stri
             return NextResponse.json({ error: 'Name is required' }, { status: 400 });
         }
 
-        const payer = await prisma.payer.update({
-            where: { id },
-            data: { name: data.name.trim() }
-        });
+        const payerIndex = mockPayers.findIndex(p => p.id === id);
+        if (payerIndex === -1) {
+            return NextResponse.json({ error: 'Payer not found' }, { status: 404 });
+        }
 
-        return NextResponse.json(payer);
+        mockPayers[payerIndex].name = data.name.trim();
+
+        return NextResponse.json(mockPayers[payerIndex]);
     } catch (error: any) {
         return NextResponse.json({ error: error.message }, { status: 500 });
     }
@@ -36,16 +38,25 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
         const { id } = await params;
 
         // Check for orders
-        const count = await prisma.order.count({ where: { payerId: id } });
+        const count = mockOrders.filter(o => o.payerId === id).length;
         if (count > 0) {
             return NextResponse.json({ error: 'Cannot delete payer tied to existing orders' }, { status: 400 });
         }
 
         // Delete associated fee schedules first via transaction or cascade
-        await prisma.$transaction([
-            prisma.feeSchedule.deleteMany({ where: { payerId: id } }),
-            prisma.payer.delete({ where: { id } })
-        ]);
+        const fsIndexesToDelete = [];
+        for (let i = 0; i < mockFeeSchedules.length; i++) {
+            if (mockFeeSchedules[i].payerId === id) fsIndexesToDelete.push(i);
+        }
+        // Delete in reverse order to avoiding shifting issues
+        for (let i = fsIndexesToDelete.length - 1; i >= 0; i--) {
+            mockFeeSchedules.splice(fsIndexesToDelete[i], 1);
+        }
+
+        const payerIndex = mockPayers.findIndex(p => p.id === id);
+        if (payerIndex > -1) {
+            mockPayers.splice(payerIndex, 1);
+        }
 
         return NextResponse.json({ success: true });
     } catch (error: any) {

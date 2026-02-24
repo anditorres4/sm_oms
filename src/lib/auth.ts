@@ -1,7 +1,7 @@
 import NextAuth from 'next-auth';
 import Credentials from 'next-auth/providers/credentials';
 import bcrypt from 'bcryptjs';
-import { prisma } from '@/lib/prisma';
+import { mockUsers } from '@/lib/mockData';
 
 export const { handlers, auth, signIn, signOut } = NextAuth({
     providers: [
@@ -14,10 +14,8 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
             async authorize(credentials) {
                 if (!credentials?.email || !credentials?.password) return null;
 
-                const email = (credentials.email as string || '').trim();
-                const user = await prisma.user.findFirst({
-                    where: { email: { equals: email, mode: 'insensitive' } },
-                });
+                const email = (credentials.email as string || '').trim().toLowerCase();
+                const user = mockUsers.find(u => u.email.toLowerCase() === email);
 
                 if (!user) return null;
 

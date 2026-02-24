@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { prisma } from '@/lib/prisma';
+import { mockProducts, mockVendors, mockOrderLines } from '@/lib/mockData';
 import { auth } from '@/lib/auth';
 
 export async function PUT(req: Request, { params }: { params: Promise<{ id: string }> }) {
@@ -16,21 +16,28 @@ export async function PUT(req: Request, { params }: { params: Promise<{ id: stri
             return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
         }
 
-        const product = await prisma.product.update({
-            where: { id },
-            data: {
-                name: data.name.trim(),
-                hcpcsCode: data.hcpcsCode.trim(),
-                vendorId: data.vendorId,
-                unitCost: data.unitCost ? parseFloat(data.unitCost) : 0,
-                msrp: data.msrp ? parseFloat(data.msrp) : 0,
-                category: data.category.trim(),
-                measurementFormRequired: Boolean(data.measurementFormRequired)
-            },
-            include: { vendor: true }
-        });
+        const productIndex = mockProducts.findIndex(p => p.id === id);
+        if (productIndex === -1) {
+            return NextResponse.json({ error: 'Product not found' }, { status: 404 });
+        }
 
-        return NextResponse.json(product);
+        mockProducts[productIndex] = {
+            ...mockProducts[productIndex],
+            name: data.name.trim(),
+            hcpcsCode: data.hcpcsCode.trim(),
+            vendorId: data.vendorId,
+            unitCost: data.unitCost ? parseFloat(data.unitCost) : 0,
+            msrp: data.msrp ? parseFloat(data.msrp) : 0,
+            category: data.category.trim(),
+            measurementFormRequired: Boolean(data.measurementFormRequired)
+        } as any;
+
+        const productWithVendor = {
+            ...mockProducts[productIndex],
+            vendor: mockVendors.find(v => v.id === mockProducts[productIndex].vendorId) || null
+        };
+
+        return NextResponse.json(productWithVendor);
     } catch (error: any) {
         return NextResponse.json({ error: error.message }, { status: 500 });
     }
@@ -45,14 +52,15 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
         const { id } = await params;
 
         // Check if orders exist with this product
-        const count = await prisma.orderLine.count({ where: { productId: id } });
+        const count = mockOrderLines.filter(line => line.productId === id).length;
         if (count > 0) {
             return NextResponse.json({ error: 'Cannot delete product currently tied to orders' }, { status: 400 });
         }
 
-        await prisma.product.delete({
-            where: { id }
-        });
+        const productIndex = mockProducts.findIndex(p => p.id === id);
+        if (productIndex > -1) {
+            mockProducts.splice(productIndex, 1);
+        }
 
         return NextResponse.json({ success: true });
     } catch (error: any) {

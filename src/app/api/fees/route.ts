@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { prisma } from '@/lib/prisma';
+import { mockFeeSchedules } from '@/lib/mockData';
 import { auth } from '@/lib/auth';
 
 export async function POST(req: Request) {
@@ -15,19 +15,24 @@ export async function POST(req: Request) {
             return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
         }
 
-        const fee = await prisma.feeSchedule.create({
-            data: {
-                payerId: data.payerId,
-                hcpcsCode: data.hcpcsCode.trim().toUpperCase(),
-                rate: parseFloat(data.rate)
-            }
-        });
+        const hcpcs = data.hcpcsCode.trim().toUpperCase();
+
+        const exists = mockFeeSchedules.some(fs => fs.payerId === data.payerId && fs.hcpcsCode === hcpcs);
+        if (exists) {
+            return NextResponse.json({ error: 'Fee schedule for this HCPCS code already exists under this payer.' }, { status: 400 });
+        }
+
+        const fee = {
+            id: `fs-${Date.now()}`,
+            payerId: data.payerId,
+            hcpcsCode: hcpcs,
+            rate: parseFloat(data.rate)
+        } as any;
+
+        mockFeeSchedules.push(fee);
 
         return NextResponse.json(fee, { status: 201 });
     } catch (error: any) {
-        if (error.code === 'P2002') {
-            return NextResponse.json({ error: 'Fee schedule for this HCPCS code already exists under this payer.' }, { status: 400 });
-        }
         return NextResponse.json({ error: error.message }, { status: 500 });
     }
 }

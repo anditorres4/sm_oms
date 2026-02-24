@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { prisma } from '@/lib/prisma';
+import { mockFeeSchedules } from '@/lib/mockData';
 import { auth } from '@/lib/auth';
 
 export async function PUT(req: Request, { params }: { params: Promise<{ id: string }> }) {
@@ -16,19 +16,23 @@ export async function PUT(req: Request, { params }: { params: Promise<{ id: stri
             return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
         }
 
-        const fee = await prisma.feeSchedule.update({
-            where: { id },
-            data: {
-                hcpcsCode: data.hcpcsCode.trim().toUpperCase(),
-                rate: parseFloat(data.rate)
-            }
-        });
+        const feeIndex = mockFeeSchedules.findIndex(fs => fs.id === id);
+        if (feeIndex === -1) {
+            return NextResponse.json({ error: 'Fee schedule not found' }, { status: 404 });
+        }
 
-        return NextResponse.json(fee);
-    } catch (error: any) {
-        if (error.code === 'P2002') {
+        const hcpcs = data.hcpcsCode.trim().toUpperCase();
+
+        const exists = mockFeeSchedules.some(fs => fs.payerId === mockFeeSchedules[feeIndex].payerId && fs.hcpcsCode === hcpcs && fs.id !== id);
+        if (exists) {
             return NextResponse.json({ error: 'Fee schedule for this HCPCS code already exists under this payer.' }, { status: 400 });
         }
+
+        mockFeeSchedules[feeIndex].hcpcsCode = hcpcs;
+        mockFeeSchedules[feeIndex].rate = parseFloat(data.rate) as any;
+
+        return NextResponse.json(mockFeeSchedules[feeIndex]);
+    } catch (error: any) {
         return NextResponse.json({ error: error.message }, { status: 500 });
     }
 }
@@ -41,9 +45,10 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
         }
         const { id } = await params;
 
-        await prisma.feeSchedule.delete({
-            where: { id }
-        });
+        const feeIndex = mockFeeSchedules.findIndex(fs => fs.id === id);
+        if (feeIndex > -1) {
+            mockFeeSchedules.splice(feeIndex, 1);
+        }
 
         return NextResponse.json({ success: true });
     } catch (error: any) {
